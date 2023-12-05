@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, joinedload
+from motor.motor_asyncio import AsyncIOMotorClient
 
 import shutil
 from pathlib import Path
@@ -13,6 +14,11 @@ import uuid
 DATABASE_URL = "postgresql://postgres:sathiskar@localhost:5432/xpayback"
 engine = create_engine(DATABASE_URL)
 Base = declarative_base()
+
+# Connect to MongoDB database
+DATABASE_URL_MONGODB = "mongodb://localhost:27017"
+client_mongodb = AsyncIOMotorClient(DATABASE_URL_MONGODB)
+db_mongodb = client_mongodb["xpayback"]
 
 # Define the directory where uploaded images will be stored
 UPLOAD_DIR = Path("image_uploads")
@@ -112,11 +118,10 @@ async def register(request: Request):
         db.refresh(new_user)
 
         """create profile for new user"""
-        new_profile = Profile(user_id = new_user.user_id,
-                        Profile_picture= profile_picture_name)
-        db.add(new_profile)
-        db.commit()
-        db.refresh(new_profile)
+        # Save profile picture to MongoDB
+        await db_mongodb.users.insert_one(
+            {"user_id": new_user.user_id, "profile_picture": profile_picture_name})
+
 
         response = {
             "code": 200,
@@ -145,34 +150,24 @@ async def get_registered_user_details():
         # Create a database session
         db = SessionLocal()
 
-        # Retrieve all users with profiles
-        #users_with_profiles = db.query(User).options(
-        #    relationship(User.profiles)
-        #).all()
-        users_with_profiles = db.query(User).options(joinedload(User.profiles)).all()
-
+        users_with_profiles = db.query(User).all()
 
         user_list = []
         for user in users_with_profiles:
+            profile_data = await db_mongodb.users.find_one({"user_id": user.user_id})
             user_data = {
                 "user_id": user.user_id,
                 "FirstName": user.FirstName,
                 "Password": user.Password,
                 "Email": user.Email,
                 "Phone": user.Phone,
-                "profiles": [
-                    {
-                        "profile_id": profile.profile_id,
-                        "Profile_picture": profile.Profile_picture,
-                    }
-                    for profile in user.profiles
-                ],
+                "profiles": str(profile_data),
             }
             user_list.append(user_data)
 
         response = {
             "code": 200,
-            "message": "Users with profiles retrieved successfully",
+            "message": "success",
             "data": user_list,
         }
 
